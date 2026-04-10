@@ -1,22 +1,27 @@
 """
 Orchestrator
 ------------
-Coordinates all 5 agents sequentially and returns a single AnalysisResult.
+Runs the keyword-gap pipeline via **CrewAI** (sequential crew + tools) by default.
+Each Crew agent wraps the same deterministic modules in ``agents/``.
+
+Set ``CREW_USE_LEGACY=1`` to use the previous direct Python call chain (no LLM).
 
   Step 1 — serp_agent      : fetch Google SERP (organic, PAA, related searches)
   Step 2 — autocomplete_agent : fetch Google Autocomplete suggestions
   Step 3 — intent_agent    : detect intent mismatch, find your rank
   Step 4 — scraper_agent   : scrape top 5 competitor pages + your article
-  Step 5 — gap_agent       : compute keyword gaps (critical / high / medium)
+  Step 5 — intent enrich   : match competitors + suggested keywords
+  Step 6 — gap_agent       : compute keyword gaps (critical / high / medium)
 
 Usage as a library:
     from orchestrator import run_analysis
-    result = run_analysis("interactive communications AEM", "https://...")
+    result = run_analysis("interactive communications AEM", "https://...", "us")
 
 Usage as CLI:
-    python3 orchestrator.py "interactive communications AEM" "https://..."
+    python3 orchestrator.py "interactive communications AEM" "https://..." us
 """
 
+import os
 import sys
 import time
 import json
@@ -27,22 +32,13 @@ from models import AnalysisResult
 from agents import serp_agent, autocomplete_agent, intent_agent, scraper_agent, gap_agent
 
 
-def run_analysis(
+def _run_analysis_sequential(
     keyword: str,
     your_url: str,
     geo: str,
     on_step: Optional[Callable[[int, str], None]] = None,
 ) -> AnalysisResult:
-    """
-    Run the full pipeline.
-
-    Args:
-        keyword   : target keyword to analyze
-        your_url  : URL of your article
-        geo       : 2-letter country code for Google SERP locale (default: "us")
-        on_step   : optional callback(step_num, description) for progress reporting
-                    e.g. used by the Streamlit dashboard to update UI
-    """
+    """Direct call chain (no CrewAI). Opt-in via CREW_USE_LEGACY=1."""
 
     def step(n, desc):
         if on_step:
@@ -50,19 +46,15 @@ def run_analysis(
 
     t0 = time.time()
 
-    # ── Step 1: SERP ──────────────────────────────────────────────────────────
     step(1, f"Fetching live Google SERP for \"{keyword}\"...")
     serp = serp_agent.run(keyword, geo)
 
-    # ── Step 2: Autocomplete ──────────────────────────────────────────────────
     step(2, "Fetching Google Autocomplete suggestions...")
     autocomplete = autocomplete_agent.run(keyword)
 
-    # ── Step 3: Intent detection ──────────────────────────────────────────────
     step(3, "Detecting search intent and your article rank...")
     intent = intent_agent.run(your_url, serp)
 
-    # ── Step 4: Scrape competitor pages + your article ────────────────────────
     step(4, f"Scraping top {min(5, len(serp.organic))} competitor pages...")
     urls_with_meta = [
         {"url": r.get("link", ""), "rank": r.get("position", "?"), "title": r.get("title", "")}
@@ -71,10 +63,8 @@ def run_analysis(
     ]
     competitor_pages, your_page = scraper_agent.run(urls_with_meta, your_url)
 
-    # ── Step 4.5: Enrich intent — match competitors + suggest refined keywords ─
     intent = intent_agent.enrich(intent, your_page, competitor_pages, keyword)
 
-    # ── Step 5: Gap analysis ──────────────────────────────────────────────────
     step(5, "Computing keyword gaps...")
     gaps = gap_agent.run(serp, autocomplete, competitor_pages, your_page, keyword)
 
@@ -97,8 +87,31 @@ def run_analysis(
             "Related Searches (SerpAPI)",
             "Google Autocomplete (live, unofficial)",
             "Competitor page content (requests + BeautifulSoup)",
+            "Orchestration: legacy sequential (CREW_USE_LEGACY)",
         ],
     )
+
+
+def run_analysis(
+    keyword: str,
+    your_url: str,
+    geo: str,
+    on_step: Optional[Callable[[int, str], None]] = None,
+) -> AnalysisResult:
+    """
+    Run the full pipeline (CrewAI by default).
+
+    Environment:
+        CREW_USE_LEGACY=1 — skip CrewAI; run the direct Python pipeline only.
+        OPENAI_API_KEY — required for default LLM (gpt-4o-mini) unless using Ollama.
+        CREW_LLM_MODEL — override model (e.g. ``ollama/llama3.2``).
+    """
+    if os.environ.get("CREW_USE_LEGACY", "").lower() in ("1", "true", "yes"):
+        return _run_analysis_sequential(keyword, your_url, geo, on_step)
+
+    from crew_orchestrator import run_analysis_with_crew
+
+    return run_analysis_with_crew(keyword, your_url, geo, on_step)
 
 
 # ── CLI entry point ────────────────────────────────────────────────────────────
@@ -190,7 +203,7 @@ if __name__ == "__main__":
 
     print()
     print("╔══════════════════════════════════════════════════════════════════╗")
-    print("║   SEO Keyword Gap Analyzer — Agent Orchestrator  v2.0          ║")
+    print("║   SEO Keyword Gap Analyzer — CrewAI orchestrator  v2.1          ║")
     print("╚══════════════════════════════════════════════════════════════════╝")
     print()
 

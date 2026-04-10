@@ -12,6 +12,7 @@ Logic:
 Returns: IntentResult
 """
 
+import os
 import re
 import urllib.parse
 from config import STOPWORDS
@@ -89,29 +90,48 @@ def _tokens(text: str) -> list:
     return [t for t in text.split() if t not in STOPWORDS and len(t) >= 3 and not t.isdigit()]
 
 
+def _heading_vocab(page: PageData) -> set:
+    """
+    Vocabulary from H1–H3 only (unigrams + bigrams). Body text is excluded so we
+    don't match competitors on generic high-frequency words like "content",
+    "experience", "learn", "guide" that dominate paragraph copy.
+    """
+    text = " ".join(page.h1 + page.h2 + page.h3)
+    if not text.strip():
+        return set()
+    ht = _tokens(text)
+    unigrams = set(ht)
+    bigrams = {f"{ht[i]} {ht[i+1]}" for i in range(len(ht) - 1)}
+    return unigrams | bigrams
+
+
 def enrich(intent: IntentResult, your_page: PageData, competitor_pages: list, keyword: str) -> IntentResult:
     """
     Runs after scraping. Enriches IntentResult with:
       - intent_matched_competitor_ranks: competitors whose content overlaps with your page
       - suggested_keywords: refined query variants built from your page's headings
 
-    Intent-matched competitors = scraped pages that share >= 3 keywords with your page.
-    These are the only SERP results that are topically relevant to your article.
+    Intent-matched competitors = scraped pages whose *headings* (plus target-keyword
+    tokens) overlap yours by at least ``INTENT_MIN_HEADING_OVERLAP`` shared terms.
+    Body-derived keyword lists are intentionally not used here — they are too generic.
 
     Suggested keywords = bigrams/trigrams extracted from your headings that:
       (a) contain at least one token from the original keyword, and
       (b) add specificity beyond the original keyword (at least one new token)
     """
-    your_kw_set = set(your_page.keywords)
+    min_overlap = int(os.environ.get("INTENT_MIN_HEADING_OVERLAP", "3"))
     kw_toks = set(_tokens(keyword))
+    # Heading + keyword tokens only (avoids generic body-frequency overlap)
+    your_vocab = _heading_vocab(your_page) | kw_toks
 
     # ── Identify intent-matched competitors ──────────────────────────────────
     matched_ranks = []
     for page in competitor_pages:
         if not page.scraped:
             continue
-        overlap = len(set(page.keywords) & your_kw_set)
-        if overlap >= 3:
+        comp_vocab = _heading_vocab(page) | kw_toks
+        overlap = len(comp_vocab & your_vocab)
+        if overlap >= min_overlap:
             matched_ranks.append(page.rank)
 
     # ── Generate suggested keywords from your page's headings ─────────────────

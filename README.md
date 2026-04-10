@@ -24,5 +24,10 @@ Product context and architecture live in [PRD.md](./PRD.md).
 - **Node.js** (for the frontend)
 - **Python 3** (for the backend)
 - **[SerpAPI](https://serpapi.com/)** API key (required for real Google SERP data)
+- **OpenAI API key** (or Ollama) for CrewAI orchestration — see [backend/README.md](./backend/README.md); use `CREW_USE_LEGACY=1` to run without an LLM
 
 Optional tooling in the backend includes Streamlit (`dashboard.py`) and standalone report scripts; see the backend README for details.
+
+## Public URL (free, one link for UI + API)
+
+Use [Render](https://render.com) + [`render.yaml`](./render.yaml): one Docker deploy, no split frontend/backend. Steps in [DEPLOY.md](./DEPLOY.md).

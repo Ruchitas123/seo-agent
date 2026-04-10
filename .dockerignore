@@ -1,0 +1,14 @@
+.git
+.github
+**/.env
+**/.venv
+**/venv
+**/node_modules
+**/__pycache__
+*.pyc
+.DS_Store
+.claude
+Ruchitas123.github.io
+frontend/dist
+*.md
+!README.md

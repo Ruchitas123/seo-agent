@@ -1,15 +1,25 @@
 """
 Flask REST API — Backend for the React dashboard
-Exposes: POST /api/analyze
-Run:     python3 api.py
+Exposes: POST /api/analyze, GET /api/health
+
+Also serves the production UI from ../frontend/dist when that folder exists
+(same URL for simple hosting: one process, no CORS split).
+
+Run locally:  python3 api.py
+Production:   gunicorn -w 2 -b 0.0.0.0:8000 api:app
 """
 
 import dataclasses
 import json
+import pathlib
 import queue
 import threading
-from flask import Flask, request, jsonify, Response, stream_with_context
+from flask import Flask, request, jsonify, Response, send_from_directory, stream_with_context
 from flask_cors import CORS
+
+_BACKEND_DIR = pathlib.Path(__file__).resolve().parent
+_REPO_ROOT = _BACKEND_DIR.parent
+_FRONTEND_DIST = _REPO_ROOT / "frontend" / "dist"
 
 app = Flask(__name__)
 CORS(app, resources={r"/api/*": {"origins": "*"}}, supports_credentials=False)
@@ -113,11 +123,38 @@ def analyze():
     )
 
 
+@app.route("/", defaults={"path": ""})
+@app.route("/<path:path>")
+def serve_frontend(path: str):
+    """Serve Vite build; SPA fallback to index.html. API routes are registered above."""
+    if not _FRONTEND_DIST.is_dir():
+        return (
+            jsonify(
+                {
+                    "error": "Frontend not built",
+                    "hint": "Run: cd frontend && npm install && npm run build",
+                }
+            ),
+            503,
+        )
+    if path.startswith("api"):
+        return jsonify({"error": "Not found"}), 404
+    if path:
+        candidate = _FRONTEND_DIST / path
+        try:
+            candidate.resolve().relative_to(_FRONTEND_DIST.resolve())
+        except ValueError:
+            return jsonify({"error": "Invalid path"}), 400
+        if candidate.is_file():
+            return send_from_directory(_FRONTEND_DIST, path)
+    return send_from_directory(_FRONTEND_DIST, "index.html")
+
+
 if __name__ == "__main__":
     print()
     print("╔══════════════════════════════════════════════════╗")
     print("║  SEO Keyword Gap Analyzer — API Server           ║")
-    print("║  Running on http://localhost:8000                ║")
+    print("║  http://localhost:8000   API + built UI from frontend/dist   ║")
     print("╚══════════════════════════════════════════════════╝")
     print()
     app.run(host="0.0.0.0", port=8000, debug=False)

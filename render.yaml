@@ -1,0 +1,15 @@
+# Free, easy: ONE service = React UI + Flask API (same URL).
+# https://render.com → New → Blueprint → connect GitHub → pick this file.
+services:
+  - type: web
+    name: seo-keyword-analyzer
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    envVars:
+      # Required — create at https://serpapi.com/
+      - key: SERPAPI_KEY
+        sync: false
+      # No OpenAI needed; uses the fast direct Python pipeline
+      - key: CREW_USE_LEGACY
+        value: "1"
